@@ -1,3 +1,74 @@
+# Autogen-Magentic-One Fork: Ollama Compatibility
+
+This fork of `autogen-magentic-one` enables compatibility with an **Ollama server** running the `Llama-3.2-11B-Vision` model. It allows the `magentic-one` agent workflow to operate fully locally, removing the need for an OpenAI API key. While the results may not fully match the quality returned by `GPT-4`, this setup offers significant cost savings and provides a solid foundation for expanding local agent capabilities in `magentic-one`.
+
+## Installation
+
+For setup, please follow the original installation instructions from the [Microsoft autogen-magentic-one repository](https://github.com/microsoft/autogen/tree/main/python/packages/autogen-magentic-one). This fork retains the core structure of the original repository, with changes limited to specific scripts to enable the use of the Ollama server and model in place of the OpenAI API.
+
+---
+
+## Modified Files in `magentic-one`
+
+This fork primarily modifies the following scripts within the `magentic-one` component of the `autogen` library:
+
+1. **`examples/example.py`**: Changed start page to Google.
+2. **`examples/example_websurfer.py`**: Changed start page to Google.
+3. **`interface/magentic_one_helper.py`**: Updated helper functions for compatibility with Ollama server.
+4. **`src/autogen_magentic_one/agents/multimodal_web_surfer/multimodal_web_surfer.py`**:
+   - Enforced structured JSON responses for web actions, including:
+     - Setting `json_output=True` in model client calls.
+     - Updating text prompts to require single JSON tool calls.
+     - Adding clear examples for each web interaction type.
+     - Removing narrative responses from prompt templates.
+   - Improved parser to handle pure JSON responses consistently, ensuring reliable, structured outputs from the LLM.
+5. **`src/autogen_magentic_one/utils.py`**: Major changes to replace OpenAI/Azure support with Ollama-specific implementation.
+
+   ### Major Changes
+   - Replaced OpenAI/Azure implementation with a custom **Ollama-specific chat completion client**.
+   - Added support for **base64 image encoding** for vision models.
+   - Integrated a new **Ollama API client** for handling chat completions.
+
+   ### Detailed Changes
+   - **New Features**:
+     - Introduced `OllamaConfig` dataclass with Ollama-specific configuration options:
+       - `base_url` (default: `http://localhost:11434`)
+       - `model` (default: `"llama3.2-vision"`)
+       - Parameters for `temperature` and `top_p` tuning.
+
+   - **Modified Components**:
+     - Implemented the `OllamaChatCompletionClient` class with:
+       - Vision model support and base64 image encoding.
+       - Asynchronous API communication with Ollama server.
+       - Custom message processing for multimodal inputs.
+
+   - **API Changes**:
+     - Updated the `create()` method to handle:
+       - Image-text multimodal inputs.
+       - Ollama’s specific API format.
+       - Streaming responses with enhanced error handling for server communication.
+
+   - **Removed Features**:
+     - Removed Azure AD token provider functionality.
+     - Removed OpenAI-specific provider selection logic.
+     - Removed all Azure/OpenAI client implementations.
+
+   - **Dependencies**:
+     - Added dependencies:
+       - `aiohttp` for asynchronous HTTP communication.
+       - `base64` for image encoding support.
+     - Removed dependencies:
+       - Azure identity and OpenAI client libraries.
+
+   - **Breaking Changes**:
+     - Environment variables are now configured for Ollama-specific parameters.
+     - Provider selection logic removed in favor of direct Ollama implementation.
+     - Authentication mechanism switched to Ollama’s local server setup, removing Azure/OpenAI dependencies.
+
+---
+
+This section provides an overview of the changes made specifically to support the Ollama server setup within `magentic-one`. For general information on `autogen`, please refer to the original `README` below.
+
 <a name="readme-top"></a>
 
 <div align="center">
