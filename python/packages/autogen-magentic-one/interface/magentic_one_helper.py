@@ -60,7 +60,7 @@ class MagenticOneHelper:
         logger.handlers = [self.log_handler]
 
         # Create client
-        client = create_completion_client_from_env(model="gpt-4o")
+        client = create_completion_client_from_env()
 
         # Set up code executor
         self.code_executor = DockerCommandLineCodeExecutor(work_dir=self.logs_dir)
@@ -104,7 +104,7 @@ class MagenticOneHelper:
         await actual_surfer.init(
             model_client=client,
             downloads_folder=os.getcwd(),
-            start_page="https://www.bing.com",
+            start_page="https://www.google.com",
             browser_channel="chromium",
             headless=True,
             debug_dir=self.logs_dir,

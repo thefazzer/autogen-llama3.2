@@ -34,7 +34,8 @@ async def main(logs_dir: str, hil_mode: bool, save_screenshots: bool) -> None:
     runtime = SingleThreadedAgentRuntime()
 
     # Create an appropriate client
-    client = create_completion_client_from_env(model="gpt-4o")
+    client = create_completion_client_from_env()
+
 
     async with DockerCommandLineCodeExecutor(work_dir=logs_dir) as code_executor:
         # Register agents.
@@ -85,7 +86,7 @@ async def main(logs_dir: str, hil_mode: bool, save_screenshots: bool) -> None:
         await actual_surfer.init(
             model_client=client,
             downloads_folder=logs_dir,
-            start_page="https://www.bing.com",
+            start_page="https://www.google.com",
             browser_channel="chromium",
             headless=True,
             debug_dir=logs_dir,

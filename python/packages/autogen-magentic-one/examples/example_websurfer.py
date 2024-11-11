@@ -24,7 +24,7 @@ async def main() -> None:
     runtime = SingleThreadedAgentRuntime()
 
     # Create an appropriate client
-    client = create_completion_client_from_env(model="gpt-4o")
+    client = create_completion_client_from_env()
 
     # Register agents.
     await MultimodalWebSurfer.register(runtime, "WebSurfer", MultimodalWebSurfer)

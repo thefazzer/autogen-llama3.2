@@ -80,7 +80,7 @@ class MultimodalWebSurfer(BaseWorker):
 
     DEFAULT_DESCRIPTION = "A helpful assistant with access to a web browser. Ask them to perform web searches, open pages, and interact with content (e.g., clicking links, scrolling the viewport, etc., filling in form fields, etc.) It can also summarize the entire page, or answer questions based on the content of the page. It can also be asked to sleep and wait for pages to load, in cases where the pages seem to be taking a while to load."
 
-    DEFAULT_START_PAGE = "https://www.bing.com/"
+    DEFAULT_START_PAGE = "https://www.google.com/"
 
     def __init__(
         self,
@@ -317,7 +317,7 @@ class MultimodalWebSurfer(BaseWorker):
                 await self._visit_page(url)
             # If the argument contains a space, treat it as a search query
             elif " " in url:
-                await self._visit_page(f"https://www.bing.com/search?q={quote_plus(url)}&FORM=QBLH")
+                await self._visit_page(f"https://www.google.com/search?q={quote_plus(url)}&FORM=QBLH")
             # Otherwise, prefix with https://
             else:
                 await self._visit_page("https://" + url)
@@ -329,7 +329,7 @@ class MultimodalWebSurfer(BaseWorker):
         elif name == "web_search":
             query = args.get("query")
             action_description = f"I typed '{query}' into the browser search bar."
-            await self._visit_page(f"https://www.bing.com/search?q={quote_plus(query)}&FORM=QBLH")
+            await self._visit_page(f"https://www.google.com/search?q={quote_plus(query)}&FORM=QBLH")
 
         elif name == "page_up":
             action_description = "I scrolled up one page in the browser."
@@ -506,7 +506,7 @@ class MultimodalWebSurfer(BaseWorker):
         ]
 
         # Can we reach Bing to search?
-        # if self._navigation_allow_list("https://www.bing.com/"):
+        # if self._navigation_allow_list("https://www.google.com/"):
         tools.append(TOOL_WEB_SEARCH)
 
         # We can scroll up
@@ -556,18 +556,73 @@ class MultimodalWebSurfer(BaseWorker):
 
         tool_names = "\n".join([t["name"] for t in tools])
 
+#         text_prompt = f"""
+# Consider the following screenshot of a web browser, which is open to the page '{self._page.url}'. In this screenshot, interactive elements are outlined in bounding boxes of different colors. Each bounding box has a numeric ID label in the same color. Additional information about each visible label is listed below:
+
+# {visible_targets}{other_targets_str}{focused_hint}
+
+# CRITICAL INSTRUCTIONS:
+# 1. You MUST return EXACTLY ONE tool call in JSON format
+# 2. Do NOT provide ANY additional text or commentary
+# 3. Do NOT assume or describe results before seeing them
+# 4. Wait for each tool action to complete before describing results
+
+# Your entire response must be a single JSON object in this format:
+# {{
+#     "tool": "<tool_name>",
+#     "arguments": {{
+#         "<arg_name>": "<arg_value>"
+#     }},
+#     "reasoning": "<why you are using this tool>"
+# }}
+
+# Available tools:
+# {tool_names}
+# """.strip()
         text_prompt = f"""
 Consider the following screenshot of a web browser, which is open to the page '{self._page.url}'. In this screenshot, interactive elements are outlined in bounding boxes of different colors. Each bounding box has a numeric ID label in the same color. Additional information about each visible label is listed below:
 
-{visible_targets}{other_targets_str}{focused_hint}You are to respond to the user's most recent request by selecting an appropriate tool the following set, or by answering the question directly if possible:
+{visible_targets}{other_targets_str}{focused_hint}
 
+CRITICAL INSTRUCTIONS:
+1. Return ONLY a single JSON object with NO additional text
+2. For web searches, use web_search tool
+3. For clicking links or buttons, use click tool with the correct target_id
+4. For typing in forms, use input_text tool
+5. For reading content, use summarize_page tool
+6. For scrolling, use page_down or page_up tools
+7. If a page is loading, use sleep tool
+
+Example formats:
+{{
+    "tool": "web_search",
+    "arguments": {{
+        "query": "<your search term>"
+    }},
+    "reasoning": "Performing search to find information"
+}}
+
+{{
+    "tool": "click",
+    "arguments": {{
+        "target_id": "<id from visible elements>"
+    }},
+    "reasoning": "Clicking element to navigate or interact"
+}}
+
+{{
+    "tool": "input_text",
+    "arguments": {{
+        "input_field_id": "<id>",
+        "text_value": "<text to enter>"
+    }},
+    "reasoning": "Entering text into form field"
+}}
+
+Available tools:
 {tool_names}
-
-When deciding between tools, consider if the request can be best addressed by:
-    - the contents of the current viewport (in which case actions like clicking links, clicking buttons, or inputting text might be most appropriate)
-    - contents found elsewhere on the full webpage (in which case actions like scrolling, summarization, or full-page Q&A might be most appropriate)
-    - on some other website entirely (in which case actions like performing a new web search might be the best option)
-""".strip()
+"""
+        
 
         # Scale the screenshot for the MLM, and close the original
         scaled_screenshot = som_screenshot.resize((MLM_WIDTH, MLM_HEIGHT))
@@ -580,20 +635,38 @@ When deciding between tools, consider if the request can be best addressed by:
             UserMessage(content=[text_prompt, AGImage.from_pil(scaled_screenshot)], source=self.metadata["type"])
         )
         response = await self._model_client.create(
-            history, tools=tools, extra_create_args={"tool_choice": "auto"}, cancellation_token=cancellation_token
+            history, tools=tools, extra_create_args={"tool_choice": "auto"}, json_output=True, cancellation_token=cancellation_token
         )  # , "parallel_tool_calls": False})
+        print("Raw Response", response)
+        print("Response Content",response.content)
         message = response.content
 
         self._last_download = None
 
         if isinstance(message, str):
-            # Answer directly
-            return False, message
+            # Try to parse the entire message as a single JSON object
+            try:
+                tool_data = json.loads(message.strip())
+                if isinstance(tool_data, dict) and "tool" in tool_data and "arguments" in tool_data:
+                    return await self._execute_tool(
+                        [FunctionCall(
+                            name=tool_data["tool"],
+                            arguments=json.dumps(tool_data["arguments"]),
+                            id="tool_call_1"  # Add an ID for the function call
+                        )],
+                        rects,
+                        tool_names,
+                        cancellation_token=cancellation_token
+                    )
+            except json.JSONDecodeError:
+                pass
+                
+            # If we get here, response wasn't valid JSON
+            return False, f"Please provide exactly one tool call in JSON format. Available tools:\n{tool_names}"
+        
         elif isinstance(message, list):
-            # Take an action
             return await self._execute_tool(message, rects, tool_names, cancellation_token=cancellation_token)
         else:
-            # Not sure what happened here
             raise AssertionError(f"Unknown response format '{message}'")
 
     async def _get_interactive_rects(self) -> Dict[str, InteractiveRegion]:
@@ -851,6 +924,7 @@ When deciding between tools, consider if the request can be best addressed by:
         scaled_screenshot.close()
         assert isinstance(response.content, str)
         return response.content
+    
 
     async def _get_ocr_text(
         self, image: bytes | io.BufferedIOBase | Image.Image, cancellation_token: Optional[CancellationToken] = None
