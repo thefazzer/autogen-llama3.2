@@ -26,6 +26,7 @@ from autogen_core.components.models import (
 from PIL import Image
 from playwright._impl._errors import Error as PlaywrightError
 from playwright._impl._errors import TimeoutError
+from playwright_stealth import stealth_async
 
 # from playwright._impl._async_base.AsyncEventInfo
 from playwright.async_api import BrowserContext, Download, Page, Playwright, async_playwright
@@ -80,7 +81,7 @@ class MultimodalWebSurfer(BaseWorker):
 
     DEFAULT_DESCRIPTION = "A helpful assistant with access to a web browser. Ask them to perform web searches, open pages, and interact with content (e.g., clicking links, scrolling the viewport, etc., filling in form fields, etc.) It can also summarize the entire page, or answer questions based on the content of the page. It can also be asked to sleep and wait for pages to load, in cases where the pages seem to be taking a while to load."
 
-    DEFAULT_START_PAGE = "https://www.google.com/"
+    DEFAULT_START_PAGE = f"https://www.google.com?hl=en&gl=us&pccc=1"
 
     def __init__(
         self,
@@ -168,7 +169,15 @@ class MultimodalWebSurfer(BaseWorker):
         self._context.set_default_timeout(60000)  # One minute
         self._page = await self._context.new_page()
         assert self._page is not None
-        # self._page.route(lambda x: True, self._route_handler)
+
+        # Apply stealth to avoid bot detection
+        try:
+            await stealth_async(self._page)
+            logging.info("Stealth mode successfully applied.")
+        except Exception as e:
+            logging.warning(f"Failed to apply stealth mode: {e}")
+
+        # Add initialization scripts and other setup
         self._page.on("download", self._download_handler)
         await self._page.set_viewport_size({"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT})
         await self._page.add_init_script(
@@ -179,6 +188,16 @@ class MultimodalWebSurfer(BaseWorker):
 
         # Prepare the debug directory -- which stores the screenshots generated throughout the process
         await self._set_debug_dir(debug_dir)
+
+    async def handle_google_consent(page):
+        try:
+            # Wait for the consent popup to appear
+            await page.wait_for_selector("button:has-text('Reject all')", timeout=5000)
+            # Click the "Reject all" button
+            await page.click("button:has-text('Reject all')")
+            logging.info("Google consent popup handled: 'Reject all' clicked.")
+        except Exception as e:
+            logging.warning(f"Google consent popup not found or failed to handle: {e}")
 
     async def _sleep(self, duration: Union[int, float]) -> None:
         assert self._page is not None
@@ -317,7 +336,8 @@ class MultimodalWebSurfer(BaseWorker):
                 await self._visit_page(url)
             # If the argument contains a space, treat it as a search query
             elif " " in url:
-                await self._visit_page(f"https://www.google.com/search?q={quote_plus(url)}&FORM=QBLH")
+                await self._visit_page(f"https://www.google.com/search?q={quote_plus(url)}&hl=en&gl=us&pccc=1")
+                await self.handle_google_consent(url)
             # Otherwise, prefix with https://
             else:
                 await self._visit_page("https://" + url)
@@ -329,7 +349,7 @@ class MultimodalWebSurfer(BaseWorker):
         elif name == "web_search":
             query = args.get("query")
             action_description = f"I typed '{query}' into the browser search bar."
-            await self._visit_page(f"https://www.google.com/search?q={quote_plus(query)}&FORM=QBLH")
+            await self._visit_page(f"https://www.google.com/search?q={quote_plus(query)}&hl=en&gl=us&pccc=1")
 
         elif name == "page_up":
             action_description = "I scrolled up one page in the browser."
@@ -727,7 +747,15 @@ Available tools:
     async def _on_new_page(self, page: Page) -> None:
         self._page = page
         assert self._page is not None
-        # self._page.route(lambda x: True, self._route_handler)
+
+        # Apply stealth to the new page
+        try:
+            await stealth_async(self._page)
+            logging.info("Stealth mode successfully applied.")
+        except Exception as e:
+            logging.warning(f"Failed to apply stealth mode: {e}")
+
+        # Set up the page
         self._page.on("download", self._download_handler)
         await self._page.set_viewport_size({"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT})
         await self._sleep(0.2)
