@@ -1,4 +1,4 @@
-import json
+import re, json, demjson3, pyjson5
 from typing import Any, Dict, List, Optional
 
 from autogen_core.base import AgentProxy, CancellationToken, MessageContext, TopicId
@@ -113,6 +113,83 @@ class LedgerOrchestrator(BaseOrchestrator):
     def _get_update_plan_prompt(self, team: str) -> str:
         return self._update_plan_prompt.format(team=team)
 
+    def _preprocess_json_string(self, json_str: str) -> str:
+        """
+        Attempt to fix common JSON issues such as:
+        - Single quotes converted to double quotes.
+        - Unescaped control characters.
+        - Replacing Python-style `None` with JSON `null`.
+        """
+        # Replace single quotes with double quotes (except for escaped quotes)
+        json_str = re.sub(r"(?<!\\)'", '"', json_str)
+
+        # Replace `None` with `null`
+        json_str = json_str.replace("None", "null")
+
+        # Remove unescaped control characters
+        json_str = re.sub(r"[\x00-\x1f\x7f-\x9f]", "", json_str)
+
+        return json_str
+
+    def _fix_with_pyjson5(self, ledger_str: str) -> Optional[str]:
+        """
+        Attempt to decode JSON using pyjson5 after preprocessing.
+        """
+        try:
+            # Preprocess the JSON string
+            ledger_str = self._preprocess_json_string(ledger_str)
+
+            # Decode using pyjson5
+            parsed = pyjson5.decode(ledger_str)
+            return json.dumps(parsed)
+        except Exception as e:
+            self.logger.warning(f"pyjson5 failed: {e}")
+            return None
+
+    def _fix_with_demjson3(self, ledger_str: str) -> Optional[str]:
+        try:
+             # Preprocess the JSON string
+            ledger_str = self._preprocess_json_string(ledger_str)
+
+            # Parse and re-encode to corrected JSON
+            parsed = demjson3.decode(ledger_str)
+            return json.dumps(parsed)
+        except demjson3.JSONDecodeError as e:
+            self.logger.warning(f"demjson3 failed: {e}")
+            return None
+
+    def _fix_with_simple_retries(self, json_str: str) -> Optional[str]:
+        """
+        Fallback to apply simple incremental fixes to the JSON string and retry decoding.
+        """
+        for _ in range(3):  # Retry up to 3 times
+            try:
+                json.loads(json_str)  # Test if it's valid
+                return json_str
+            except json.JSONDecodeError as e:
+                # Attempt fixes for common issues
+                if "control character" in str(e):
+                    json_str = re.sub(r"[\x00-\x1f]", "", json_str)  # Remove control characters
+                elif "Expecting ',' delimiter" in str(e):
+                    json_str = json_str.replace("}", "},", 1)  # Add missing comma
+                elif "Unclosed string" in str(e):
+                    json_str += '"'  # Close the string
+                else:
+                    break
+        return None
+
+    def _fix_json_with_libraries(self, ledger_str: str) -> Optional[str]:
+        """
+        Attempt to fix JSON using multiple libraries and strategies.
+        """
+        # Preprocess and try multiple fixes
+        preprocess_functions = [self._fix_with_pyjson5, self._fix_with_demjson3, self._fix_with_simple_retries]
+        for fixer in preprocess_functions:
+            fixed_json = fixer(ledger_str)
+            if fixed_json:
+                return fixed_json
+        return None
+    
     async def _get_team_description(self) -> str:
         # a single string description of all agents in the team
         team_description = ""
@@ -251,13 +328,25 @@ class LedgerOrchestrator(BaseOrchestrator):
                     continue
                 return ledger_dict
             except json.JSONDecodeError as e:
+                # Attempt to fix the JSON string
+                fixed_ledger_str = self._fix_json_with_libraries(ledger_str)
+                if fixed_ledger_str:
+                    try:
+                        ledger_dict = json.loads(fixed_ledger_str)
+                        return ledger_dict
+                    except json.JSONDecodeError:
+                        pass
+
                 self.logger.info(
                     OrchestrationEvent(
                         f"{self.metadata['type']} (error)",
                         f"Failed to parse ledger information: {ledger_str}",
                     )
                 )
-                raise e
+                ledger_user_messages.append(AssistantMessage(content=ledger_str, source="self"))
+                ledger_user_messages.append(
+                    UserMessage(content=f"JSONDecodeError: {str(e)}", source=self.metadata["type"])
+                )
 
         raise ValueError("Failed to parse ledger information after multiple retries.")
 
