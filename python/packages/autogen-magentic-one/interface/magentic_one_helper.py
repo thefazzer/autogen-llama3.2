@@ -104,7 +104,7 @@ class MagenticOneHelper:
         await actual_surfer.init(
             model_client=client,
             downloads_folder=os.getcwd(),
-            start_page="https://www.google.com",
+            start_page=f"https://www.google.com?hl=en&gl=us&pccc=1",
             browser_channel="chromium",
             headless=True,
             debug_dir=self.logs_dir,
