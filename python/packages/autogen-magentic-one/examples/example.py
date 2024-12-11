@@ -5,6 +5,8 @@ import asyncio
 import logging
 import os
 
+import pyroscope
+
 from autogen_core.application import SingleThreadedAgentRuntime
 from autogen_core.application.logging import EVENT_LOGGER_NAME
 from autogen_core.base import AgentId, AgentProxy
@@ -20,6 +22,15 @@ from autogen_magentic_one.utils import LogHandler, create_completion_client_from
 
 # NOTE: Don't forget to 'playwright install --with-deps chromium'
 
+import pyroscope
+
+#pyroscope.configure(
+#    application_name="magentic_one_example",  # Unique name for your application
+#    server_address="http://localhost:4040",  # Pyroscope server address
+#    gil_only=True,
+#    enable_logging=True,
+#    detect_subprocesses=True,  # Profile Python's Global Interpreter Lock
+#)
 
 async def confirm_code(code: CodeBlock) -> bool:
     response = await asyncio.to_thread(
