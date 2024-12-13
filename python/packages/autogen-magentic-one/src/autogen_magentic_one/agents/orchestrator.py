@@ -300,11 +300,21 @@ class LedgerOrchestrator(BaseOrchestrator):
 
             try:
                 assert isinstance(ledger_str, str)
-                ledger_dict: Dict[str, Any] = json.loads(ledger_str)
+                try:
+                    # First try direct JSON parsing
+                    ledger_dict: Dict[str, Any] = json.loads(ledger_str)
+                except json.JSONDecodeError:
+                    # If direct parsing fails, try fixing the JSON
+                    fixed_ledger_str = self._fix_json_with_libraries(ledger_str)
+                    if fixed_ledger_str is None:
+                        raise ValueError(f"Could not fix JSON: {ledger_str}")
+                    ledger_dict = json.loads(fixed_ledger_str)
+
+                # Validate required keys
                 required_keys = [
                     "is_request_satisfied",
                     "is_in_loop",
-                    "is_progress_being_made",
+                    "is_progress_being_made", 
                     "next_speaker",
                     "instruction_or_question",
                 ]
@@ -327,16 +337,8 @@ class LedgerOrchestrator(BaseOrchestrator):
                 if key_error:
                     continue
                 return ledger_dict
-            except json.JSONDecodeError as e:
-                # Attempt to fix the JSON string
-                fixed_ledger_str = self._fix_json_with_libraries(ledger_str)
-                if fixed_ledger_str:
-                    try:
-                        ledger_dict = json.loads(fixed_ledger_str)
-                        return ledger_dict
-                    except json.JSONDecodeError:
-                        pass
 
+            except Exception as e:
                 self.logger.info(
                     OrchestrationEvent(
                         f"{self.metadata['type']} (error)",
@@ -345,7 +347,7 @@ class LedgerOrchestrator(BaseOrchestrator):
                 )
                 ledger_user_messages.append(AssistantMessage(content=ledger_str, source="self"))
                 ledger_user_messages.append(
-                    UserMessage(content=f"JSONDecodeError: {str(e)}", source=self.metadata["type"])
+                    UserMessage(content=f"Error: {str(e)}", source=self.metadata["type"])
                 )
 
         raise ValueError("Failed to parse ledger information after multiple retries.")
